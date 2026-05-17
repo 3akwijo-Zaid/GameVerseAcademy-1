@@ -7,7 +7,12 @@
 
   <servers>
     <server>
-      <id>nexus</id>  <!-- must match <id> in pom.xml distributionManagement -->
+      <id>nexus</id>
+      <username>${env.NEXUS_CREDS_USR}</username>
+      <password>${env.NEXUS_CREDS_PSW}</password>
+    </server>
+    <server>
+      <id>nexus-mirror</id>
       <username>${env.NEXUS_CREDS_USR}</username>
       <password>${env.NEXUS_CREDS_PSW}</password>
     </server>
