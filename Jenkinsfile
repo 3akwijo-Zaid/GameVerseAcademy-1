@@ -194,8 +194,7 @@ pipeline {
                       --namespace production \
                       --create-namespace \
                       --set image.repository=${NEXUS_DOCKER_REG}/${APP_NAME} \
-                      --set image.tag=${BUILD_NUMBER} \
-                      --wait --timeout 3m
+                      --set image.tag=${BUILD_NUMBER}
                 """
             }
         }
