@@ -11,12 +11,11 @@ pipeline {
         APP_VERSION    = '0.0.1-SNAPSHOT'
         DOCKER_IMAGE   = "${APP_NAME}:${BUILD_NUMBER}"
 
-        NEXUS_URL          = 'http://nexus:8081'
-        NEXUS_DOCKER_REG   = 'localhost:8082'
-        NEXUS_CREDS        = credentials('nexus-credentials')
+        NEXUS_URL        = 'http://nexus:8081'
+        NEXUS_DOCKER_REG = 'localhost:8082'
+        NEXUS_CREDS      = credentials('nexus-credentials')
 
-        SONAR_HOST     = 'http://sonarqube:9000'
-
+        SONAR_HOST      = 'http://sonarqube:9000'
         EMAIL_RECIPIENT = 'team@esi.ac.ma'
     }
 
@@ -31,96 +30,116 @@ pipeline {
 
     stages {
 
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
         stage('SCM Polling') {
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
             steps {
+                echo '── Step 1/3: Checking out source code from GitHub ──'
                 checkout scm
+
+                echo '── Step 2/3: Reading commit metadata ──'
                 script {
-                    def commitHash    = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                    def commitAuthor  = sh(script: 'git log -1 --format="%an <%ae>"', returnStdout: true).trim()
-                    def commitMessage = sh(script: 'git log -1 --format="%s"', returnStdout: true).trim()
-                    def commitDate    = sh(script: 'git log -1 --format="%cd" --date=format:"%Y-%m-%d %H:%M:%S"', returnStdout: true).trim()
-                    def changedFiles  = sh(script: 'git diff --name-only HEAD~1 HEAD 2>/dev/null | head -20 || echo "(first commit)"', returnStdout: true).trim()
-                    def branch        = env.GIT_BRANCH ?: sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
+                    env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    env.GIT_AUTHOR      = sh(script: 'git log -1 --format="%an"', returnStdout: true).trim()
+                    env.GIT_MSG         = sh(script: 'git log -1 --format="%s"', returnStdout: true).trim()
+                    env.GIT_DATE        = sh(script: 'git log -1 --format="%cd" --date=format:"%Y-%m-%d %H:%M"', returnStdout: true).trim()
+                    env.GIT_BRANCH_NAME = env.GIT_BRANCH ?: sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
+                    env.CHANGED_FILES   = sh(script: 'git diff --name-only HEAD~1 HEAD 2>/dev/null | wc -l || echo 0', returnStdout: true).trim()
+                }
 
+                echo '── Step 3/3: Reporting SCM state ──'
+                echo """
+┌─────────────────────────────────────────────────────┐
+│  SCM POLLING  —  Poll interval: H/5 * * * *         │
+├─────────────────────────────────────────────────────┤
+│  Branch  : ${env.GIT_BRANCH_NAME}
+│  Commit  : ${env.GIT_COMMIT_SHORT}  by ${env.GIT_AUTHOR}
+│  Date    : ${env.GIT_DATE}
+│  Message : ${env.GIT_MSG}
+│  Changed : ${env.CHANGED_FILES} file(s) since last commit
+└─────────────────────────────────────────────────────┘"""
+            }
+        }
+
+        // ═══════════════════════════════════════════════════
+        stage('Build') {
+        // ═══════════════════════════════════════════════════
+            steps {
+                echo '── Step 1/3: Cleaning previous build output (target/) ──'
+                sh 'mvn clean --no-transfer-progress -q'
+
+                echo '── Step 2/3: Compiling Java 21 sources ──'
+                sh 'mvn compile --no-transfer-progress'
+
+                echo '── Step 3/3: Verifying compiled classes ──'
+                script {
+                    def classCount = sh(script: 'find target/classes -name "*.class" 2>/dev/null | wc -l', returnStdout: true).trim()
                     echo """
-╔══════════════════════════════════════════════════════╗
-║              SCM — Source Control Info               ║
-╠══════════════════════════════════════════════════════╣
-║  Trigger   : Poll SCM (every 5 min) / Webhook        ║
-║  Branch    : ${branch.padRight(38)}║
-║  Commit    : ${commitHash.padRight(38)}║
-║  Author    : ${commitAuthor.take(38).padRight(38)}║
-║  Date      : ${commitDate.padRight(38)}║
-╠══════════════════════════════════════════════════════╣
-║  Message   : ${commitMessage.take(38).padRight(38)}║
-╠══════════════════════════════════════════════════════╣
-║  Changed files:                                      ║
-${changedFiles.split('\n').collect { "║    • ${it.take(48).padRight(48)}║" }.join('\n')}
-╚══════════════════════════════════════════════════════╝"""
+┌─────────────────────────────────────────────────────┐
+│  BUILD                                               │
+├─────────────────────────────────────────────────────┤
+│  Java version : 21 (eclipse-temurin)                 │
+│  Maven goal   : clean compile                        │
+│  Classes built: ${classCount}
+│  Source dir   : src/main/java                        │
+│  Output dir   : target/classes                       │
+└─────────────────────────────────────────────────────┘"""
                 }
             }
         }
 
-        // ─────────────────────────────────────────
-        stage('Compile') {
-        // ─────────────────────────────────────────
-            steps {
-                echo '── Compiling sources with Maven (Java 21) ──'
-                sh 'mvn clean compile --no-transfer-progress'
-                echo '── Compilation successful ──'
-            }
-        }
-
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
         stage('Test & Coverage') {
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
             steps {
-                echo '── Running unit tests + JaCoCo coverage ──'
+                echo '── Step 1/4: Running JUnit 5 unit tests via Maven Surefire ──'
                 sh 'mvn test --no-transfer-progress'
-            }
-            post {
-                always {
-                    junit 'target/surefire-reports/*.xml'
-                    jacoco(
-                        execPattern:   'target/jacoco.exec',
-                        classPattern:  'target/classes',
-                        sourcePattern: 'src/main/java'
-                    )
-                    script {
-                        def testResults = ''
-                        try {
-                            def passed  = currentBuild.testResultAction?.totalCount ?: '?'
-                            def failed  = currentBuild.testResultAction?.failCount   ?: '0'
-                            def skipped = currentBuild.testResultAction?.skipCount   ?: '0'
-                            testResults = "Passed: ${passed}  |  Failed: ${failed}  |  Skipped: ${skipped}"
-                        } catch (e) {
-                            testResults = 'See Test Results tab for details'
-                        }
-                        echo """
-╔══════════════════════════════════════════════════════╗
-║                   Test Results                       ║
-╠══════════════════════════════════════════════════════╣
-║  ${testResults.padRight(52)}║
-║  Coverage report : target/site/jacoco/index.html     ║
-║  Surefire reports: target/surefire-reports/          ║
-╚══════════════════════════════════════════════════════╝"""
-                    }
+
+                echo '── Step 2/4: Publishing JUnit XML reports ──'
+                junit 'target/surefire-reports/*.xml'
+
+                echo '── Step 3/4: Publishing JaCoCo code coverage ──'
+                jacoco(
+                    execPattern:   'target/jacoco.exec',
+                    classPattern:  'target/classes',
+                    sourcePattern: 'src/main/java'
+                )
+
+                echo '── Step 4/4: Reporting test summary ──'
+                script {
+                    def total   = currentBuild.testResultAction?.totalCount  ?: '?'
+                    def failed  = currentBuild.testResultAction?.failCount    ?: '0'
+                    def skipped = currentBuild.testResultAction?.skipCount    ?: '0'
+                    def passed  = (total == '?') ? '?' : (total.toInteger() - failed.toInteger() - skipped.toInteger())
+                    echo """
+┌─────────────────────────────────────────────────────┐
+│  TEST & COVERAGE                                     │
+├─────────────────────────────────────────────────────┤
+│  Framework   : JUnit 5 + Maven Surefire              │
+│  Total tests : ${total}
+│  Passed      : ${passed}
+│  Failed      : ${failed}
+│  Skipped     : ${skipped}
+├─────────────────────────────────────────────────────┤
+│  Coverage    : JaCoCo (exec: target/jacoco.exec)     │
+│  HTML report : target/site/jacoco/index.html         │
+│  XML report  : target/site/jacoco/jacoco.xml         │
+└─────────────────────────────────────────────────────┘"""
                 }
             }
         }
 
-        // ─────────────────────────────────────────
-        stage('Code Quality') {
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
+        stage('Code Analysis') {
+        // ═══════════════════════════════════════════════════
             parallel {
 
                 stage('SonarQube') {
                     steps {
-                        echo '── Sending analysis to SonarQube ──'
+                        echo '── Step 1/3: Connecting to SonarQube server ──'
                         withSonarQubeEnv('SonarQube') {
                             withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
+                                echo '── Step 2/3: Sending analysis (sources + coverage + bytecode) ──'
                                 sh """
                                     mvn sonar:sonar \
                                       --no-transfer-progress \
@@ -132,74 +151,104 @@ ${changedFiles.split('\n').collect { "║    • ${it.take(48).padRight(48)}║"
                                 """
                             }
                         }
-                        echo "── SonarQube dashboard: http://localhost:9000/dashboard?id=GameVerseAcademy ──"
+                        echo '── Step 3/3: Analysis submitted ──'
+                        echo """
+┌─────────────────────────────────────────────────────┐
+│  SONARQUBE ANALYSIS                                  │
+├─────────────────────────────────────────────────────┤
+│  Server    : ${SONAR_HOST}
+│  Project   : GameVerseAcademy                        │
+│  Metrics   : bugs, vulnerabilities, code smells,    │
+│              duplications, coverage, complexity      │
+│  Dashboard : http://localhost:9000/dashboard         │
+│              ?id=GameVerseAcademy                    │
+└─────────────────────────────────────────────────────┘"""
                     }
                 }
 
                 stage('Checkstyle & PMD') {
                     steps {
-                        echo '── Running Checkstyle + PMD static analysis ──'
-                        sh 'mvn checkstyle:check pmd:check --no-transfer-progress || true'
-                    }
-                    post {
-                        always {
-                            recordIssues(
-                                tools: [
-                                    checkStyle(pattern: 'target/checkstyle-result.xml'),
-                                    pmdParser(pattern: 'target/pmd.xml')
-                                ]
-                            )
-                            echo '── Static analysis issues recorded — see Warnings NG tab ──'
-                        }
+                        echo '── Step 1/3: Running Checkstyle (Google style rules) ──'
+                        sh 'mvn checkstyle:check --no-transfer-progress || true'
+
+                        echo '── Step 2/3: Running PMD (static bug detection) ──'
+                        sh 'mvn pmd:check --no-transfer-progress || true'
+
+                        echo '── Step 3/3: Recording issues in Warnings NG ──'
+                        recordIssues(
+                            tools: [
+                                checkStyle(pattern: 'target/checkstyle-result.xml'),
+                                pmdParser(pattern: 'target/pmd.xml')
+                            ]
+                        )
+                        echo """
+┌─────────────────────────────────────────────────────┐
+│  STATIC ANALYSIS                                     │
+├─────────────────────────────────────────────────────┤
+│  Checkstyle : target/checkstyle-result.xml           │
+│  PMD        : target/pmd.xml                         │
+│  Results    : Warnings NG tab (Jenkins sidebar)      │
+└─────────────────────────────────────────────────────┘"""
                     }
                 }
             }
         }
 
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
         stage('Quality Gate') {
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
             steps {
+                echo '── Evaluating SonarQube quality gate status ──'
                 echo """
-╔══════════════════════════════════════════════════════╗
-║                   Quality Gate                       ║
-╠══════════════════════════════════════════════════════╣
-║  SonarQube : http://localhost:9000                   ║
-║  Project   : GameVerseAcademy                        ║
-║  Status    : See SonarQube dashboard for gate result ║
-╚══════════════════════════════════════════════════════╝"""
+┌─────────────────────────────────────────────────────┐
+│  QUALITY GATE                                        │
+├─────────────────────────────────────────────────────┤
+│  Gate result : see SonarQube dashboard               │
+│  URL         : http://localhost:9000                 │
+│  Thresholds  : coverage, reliability, security,      │
+│                maintainability ratings               │
+└─────────────────────────────────────────────────────┘"""
             }
         }
 
-        // ─────────────────────────────────────────
-        stage('Package') {
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
+        stage('Package & Archive') {
+        // ═══════════════════════════════════════════════════
             steps {
-                echo '── Packaging fat JAR (maven-shade-plugin) ──'
+                echo '── Step 1/3: Packaging fat JAR via maven-shade-plugin ──'
                 sh 'mvn package -DskipTests --no-transfer-progress'
+
+                echo '── Step 2/3: Archiving artifact in Jenkins ──'
+                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+
+                echo '── Step 3/3: Reporting artifact details ──'
                 script {
-                    def jarFile = sh(script: 'ls -lh target/GameVerseAcademy-*.jar | awk \'{print $5, $9}\'', returnStdout: true).trim()
-                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                    def jarName = sh(script: 'ls target/GameVerseAcademy-*.jar', returnStdout: true).trim()
+                    def jarSize = sh(script: "du -sh ${jarName} | awk '{print \$1}'", returnStdout: true).trim()
                     echo """
-╔══════════════════════════════════════════════════════╗
-║                 Artifact Archived                    ║
-╠══════════════════════════════════════════════════════╣
-║  JAR       : ${jarFile.take(38).padRight(38)}║
-║  Archived  : target/*.jar (fingerprinted)            ║
-║  Build     : #${BUILD_NUMBER.padRight(37)}║
-╚══════════════════════════════════════════════════════╝"""
+┌─────────────────────────────────────────────────────┐
+│  PACKAGE & ARCHIVE                                   │
+├─────────────────────────────────────────────────────┤
+│  Plugin    : maven-shade-plugin (fat/uber JAR)       │
+│  JAR file  : ${jarName.split('/').last()}
+│  Size      : ${jarSize}
+│  Build #   : ${BUILD_NUMBER}
+│  Archived  : Jenkins workspace artifacts             │
+│  Fingerprint: enabled (SHA-1 tracked)                │
+└─────────────────────────────────────────────────────┘"""
                 }
             }
         }
 
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
         stage('Deploy to Nexus') {
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
             steps {
-                echo '── Deploying artifact to Nexus maven-snapshots ──'
+                echo '── Step 1/3: Authenticating with Nexus Maven repository ──'
                 withCredentials([usernamePassword(credentialsId: 'nexus-credentials',
                                                   usernameVariable: 'NEXUS_USER',
                                                   passwordVariable: 'NEXUS_PASS')]) {
+                    echo '── Step 2/3: Uploading JAR + POM to maven-snapshots ──'
                     sh """
                         mvn deploy -DskipTests --no-transfer-progress \
                           -s /var/jenkins_home/.m2/settings.xml \
@@ -208,36 +257,54 @@ ${changedFiles.split('\n').collect { "║    • ${it.take(48).padRight(48)}║"
                           -Dnexus.password=${NEXUS_PASS}
                     """
                 }
-                echo "── Artifact available at: ${NEXUS_URL}/#browse/browse:maven-snapshots ──"
+                echo '── Step 3/3: Reporting deployment location ──'
+                echo """
+┌─────────────────────────────────────────────────────┐
+│  NEXUS MAVEN DEPLOYMENT                              │
+├─────────────────────────────────────────────────────┤
+│  Server     : ${NEXUS_URL}
+│  Repository : maven-snapshots                        │
+│  Group      : ma.ac.esi                              │
+│  Artifact   : GameVerseAcademy-${APP_VERSION}.jar
+│  Browse     : ${NEXUS_URL}/#browse/browse:maven-snapshots
+└─────────────────────────────────────────────────────┘"""
             }
         }
 
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
         stage('Docker Build') {
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
             steps {
-                echo "── Building Docker image: ${DOCKER_IMAGE} ──"
+                echo '── Step 1/3: Building Docker image from Dockerfile ──'
                 sh "docker build -t ${DOCKER_IMAGE} ."
+
+                echo '── Step 2/3: Verifying image was created ──'
+                sh "docker image inspect ${DOCKER_IMAGE} --format '{{.Id}}'"
+
+                echo '── Step 3/3: Reporting image metadata ──'
                 script {
-                    def imageSize = sh(script: "docker image inspect ${DOCKER_IMAGE} --format '{{.Size}}' | awk '{printf \"%.1f MB\", \$1/1024/1024}'", returnStdout: true).trim()
+                    def sizeBytes = sh(script: "docker image inspect ${DOCKER_IMAGE} --format '{{.Size}}'", returnStdout: true).trim().toLong()
+                    def sizeMB    = String.format("%.1f MB", sizeBytes / 1024 / 1024)
                     echo """
-╔══════════════════════════════════════════════════════╗
-║                  Docker Image Built                  ║
-╠══════════════════════════════════════════════════════╣
-║  Image     : ${DOCKER_IMAGE.padRight(38)}║
-║  Base      : eclipse-temurin:21-jre-alpine           ║
-║  Size      : ${imageSize.padRight(38)}║
-║  Port      : 6060                                    ║
-╚══════════════════════════════════════════════════════╝"""
+┌─────────────────────────────────────────────────────┐
+│  DOCKER BUILD                                        │
+├─────────────────────────────────────────────────────┤
+│  Image     : ${DOCKER_IMAGE}
+│  Base      : eclipse-temurin:21-jre-alpine           │
+│  Port      : EXPOSE 6060                             │
+│  Size      : ${sizeMB}
+│  Dockerfile: ./Dockerfile                            │
+└─────────────────────────────────────────────────────┘"""
                 }
             }
         }
 
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
         stage('Trivy Security Scan') {
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
             steps {
-                echo '── Scanning Docker image for vulnerabilities (HIGH/CRITICAL) ──'
+                echo '── Step 1/3: Pulling Trivy scanner image ──'
+                echo '── Step 2/3: Scanning image for HIGH and CRITICAL CVEs ──'
                 sh """
                     docker run --rm \
                       -v /var/run/docker.sock:/var/run/docker.sock \
@@ -247,34 +314,58 @@ ${changedFiles.split('\n').collect { "║    • ${it.take(48).padRight(48)}║"
                         --format table \
                         ${DOCKER_IMAGE}
                 """
-                echo '── Trivy scan complete — exit-code 0 (report only, no gate) ──'
+                echo '── Step 3/3: Reporting scan outcome ──'
+                echo """
+┌─────────────────────────────────────────────────────┐
+│  TRIVY SECURITY SCAN                                 │
+├─────────────────────────────────────────────────────┤
+│  Tool      : aquasec/trivy                           │
+│  Target    : ${DOCKER_IMAGE}
+│  Severities: HIGH, CRITICAL                          │
+│  Exit code : 0 (report-only, pipeline not blocked)   │
+│  Note      : set --exit-code 1 to enforce hard gate  │
+└─────────────────────────────────────────────────────┘"""
             }
         }
 
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
         stage('Push to Nexus Docker Registry') {
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
             steps {
-                echo "── Pushing ${DOCKER_IMAGE} to Nexus Docker registry ──"
+                echo '── Step 1/3: Authenticating with Nexus Docker registry ──'
                 sh """
                     docker login ${NEXUS_DOCKER_REG} \
                       -u ${NEXUS_CREDS_USR} \
                       -p ${NEXUS_CREDS_PSW}
+                """
 
-                    docker tag ${DOCKER_IMAGE} \
-                        ${NEXUS_DOCKER_REG}/${DOCKER_IMAGE}
-
+                echo '── Step 2/3: Tagging and pushing image ──'
+                sh """
+                    docker tag ${DOCKER_IMAGE} ${NEXUS_DOCKER_REG}/${DOCKER_IMAGE}
                     docker push ${NEXUS_DOCKER_REG}/${DOCKER_IMAGE}
                 """
-                echo "── Image pushed: ${NEXUS_DOCKER_REG}/${DOCKER_IMAGE} ──"
+
+                echo '── Step 3/3: Reporting registry location ──'
+                echo """
+┌─────────────────────────────────────────────────────┐
+│  NEXUS DOCKER PUSH                                   │
+├─────────────────────────────────────────────────────┤
+│  Registry  : ${NEXUS_DOCKER_REG}
+│  Image     : ${NEXUS_DOCKER_REG}/${DOCKER_IMAGE}
+│  Browse    : http://localhost:8082/v2/_catalog       │
+└─────────────────────────────────────────────────────┘"""
             }
         }
 
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
         stage('Deploy to k3s via Helm') {
-        // ─────────────────────────────────────────
+        // ═══════════════════════════════════════════════════
             steps {
-                echo '── Deploying to Kubernetes (k3s) via Helm ──'
+                echo '── Step 1/3: Verifying Helm + kubeconfig ──'
+                sh 'helm version --short'
+                sh 'kubectl config current-context'
+
+                echo '── Step 2/3: Running helm upgrade --install ──'
                 sh """
                     helm upgrade --install ${APP_NAME} ./charts/${APP_NAME} \
                       --namespace production \
@@ -282,43 +373,46 @@ ${changedFiles.split('\n').collect { "║    • ${it.take(48).padRight(48)}║"
                       --set image.repository=${NEXUS_DOCKER_REG}/${APP_NAME} \
                       --set image.tag=${BUILD_NUMBER}
                 """
+
+                echo '── Step 3/3: Reporting deployment state ──'
+                sh 'helm status gameverseacademy -n production'
                 echo """
-╔══════════════════════════════════════════════════════╗
-║              Deployed to Kubernetes                  ║
-╠══════════════════════════════════════════════════════╣
-║  Namespace : production                              ║
-║  Release   : ${APP_NAME.padRight(38)}║
-║  Image     : ${(NEXUS_DOCKER_REG + '/' + APP_NAME + ':' + BUILD_NUMBER).take(38).padRight(38)}║
-║  Check     : kubectl get pods -n production          ║
-╚══════════════════════════════════════════════════════╝"""
+┌─────────────────────────────────────────────────────┐
+│  KUBERNETES DEPLOYMENT                               │
+├─────────────────────────────────────────────────────┤
+│  Orchestrator : k3s (Kubernetes)                     │
+│  Tool         : Helm 3                               │
+│  Chart        : ./charts/gameverseacademy            │
+│  Release      : ${APP_NAME}
+│  Namespace    : production                           │
+│  Image        : ${NEXUS_DOCKER_REG}/${APP_NAME}:${BUILD_NUMBER}
+│  Check pods   : kubectl get pods -n production       │
+└─────────────────────────────────────────────────────┘"""
             }
         }
     }
 
-    // ─────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════
     post {
-    // ─────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════
         success {
             echo """
-╔══════════════════════════════════════════════════════╗
-║  BUILD OK — ${(env.JOB_NAME + ' #' + env.BUILD_NUMBER).take(40).padRight(40)}║
-╚══════════════════════════════════════════════════════╝"""
+┌─────────────────────────────────────────────────────┐
+│  BUILD SUCCESSFUL — ${env.JOB_NAME} #${env.BUILD_NUMBER}
+└─────────────────────────────────────────────────────┘"""
         }
-
         failure {
             echo """
-╔══════════════════════════════════════════════════════╗
-║  BUILD FAILED — ${(env.JOB_NAME + ' #' + env.BUILD_NUMBER).take(37).padRight(37)}║
-╚══════════════════════════════════════════════════════╝"""
+┌─────────────────────────────────────────────────────┐
+│  BUILD FAILED — ${env.JOB_NAME} #${env.BUILD_NUMBER}
+└─────────────────────────────────────────────────────┘"""
         }
-
         unstable {
             echo """
-╔══════════════════════════════════════════════════════╗
-║  BUILD UNSTABLE — ${(env.JOB_NAME + ' #' + env.BUILD_NUMBER).take(35).padRight(35)}║
-╚══════════════════════════════════════════════════════╝"""
+┌─────────────────────────────────────────────────────┐
+│  BUILD UNSTABLE — ${env.JOB_NAME} #${env.BUILD_NUMBER}
+└─────────────────────────────────────────────────────┘"""
         }
-
         always {
             deleteDir()
         }
