@@ -11,8 +11,8 @@ pipeline {
         APP_VERSION    = '0.0.1-SNAPSHOT'
         DOCKER_IMAGE   = "${APP_NAME}:${BUILD_NUMBER}"
 
-        NEXUS_URL          = 'http://localhost:8081'
-        NEXUS_DOCKER_REG   = 'localhost:8082'          // Docker registry on Nexus
+        NEXUS_URL          = 'http://nexus:8081'
+        NEXUS_DOCKER_REG   = 'localhost:8082'          // Docker registry on Nexus (host port)
         NEXUS_CREDS        = credentials('nexus-credentials')
 
         SONAR_HOST     = 'http://localhost:9000'
@@ -27,7 +27,6 @@ pipeline {
 
     options {
         buildDiscarder(logRotator(numToKeepStr: '10'))
-        timestamps()
         timeout(time: 30, unit: 'MINUTES')
     }
 
@@ -199,31 +198,19 @@ pipeline {
     post {
     // ─────────────────────────────────────────────
         success {
-            mail(
-                to:      "${EMAIL_RECIPIENT}",
-                subject: "BUILD OK — ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                body:    "Build réussi.\nBranch: ${env.GIT_BRANCH}\nVoir: ${env.BUILD_URL}"
-            )
+            echo "BUILD OK — ${env.JOB_NAME} #${env.BUILD_NUMBER}"
         }
 
         failure {
-            mail(
-                to:      "${EMAIL_RECIPIENT}",
-                subject: "BUILD ECHOUE — ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                body:    "Le build a échoué.\nBranch: ${env.GIT_BRANCH}\nVoir: ${env.BUILD_URL}"
-            )
+            echo "BUILD ECHOUE — ${env.JOB_NAME} #${env.BUILD_NUMBER}"
         }
 
         unstable {
-            mail(
-                to:      "${EMAIL_RECIPIENT}",
-                subject: "BUILD INSTABLE — ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                body:    "Tests instables.\nBranch: ${env.GIT_BRANCH}\nVoir: ${env.BUILD_URL}"
-            )
+            echo "BUILD INSTABLE — ${env.JOB_NAME} #${env.BUILD_NUMBER}"
         }
 
         always {
-            cleanWs()
+            deleteDir()
         }
     }
 }
