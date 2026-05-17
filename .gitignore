@@ -1,0 +1,24 @@
+# Ignorer les dossiers de build et de sortie (Très important pour Jenkins)
+/target/
+target/*
+!.github/
+!.gitignore
+
+# Ignorer les fichiers de configuration spécifiques à l'IDE Eclipse
+.settings/
+.metadata/
+.classpath
+.project
+*.tmp
+*.bak
+*.swp
+*~
+
+# Ignorer les répertoires d'exécution locaux
+tomcat.6060/
+bin/
+dependency-reduced-pom.xml
+
+# Ignorer les fichiers de logs et de crashs
+*.log
+crash-*
