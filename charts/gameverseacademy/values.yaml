@@ -1,5 +1,8 @@
 replicaCount: 1
 
+imagePullSecrets:
+  - name: nexus-registry
+
 image:
   repository: localhost:8082/gameverseacademy
   tag: "latest"
