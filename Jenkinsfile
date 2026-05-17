@@ -75,14 +75,17 @@ pipeline {
                 stage('SonarQube') {
                     steps {
                         withSonarQubeEnv('SonarQube') {
-                            sh """
-                                mvn sonar:sonar \
-                                  --no-transfer-progress \
-                                  -Dsonar.projectKey=GameVerseAcademy \
-                                  -Dsonar.projectName='GameVerseAcademy' \
-                                  -Dsonar.host.url=${SONAR_HOST} \
-                                  -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
-                            """
+                            withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
+                                sh """
+                                    mvn sonar:sonar \
+                                      --no-transfer-progress \
+                                      -Dsonar.projectKey=GameVerseAcademy \
+                                      -Dsonar.projectName='GameVerseAcademy' \
+                                      -Dsonar.host.url=${SONAR_HOST} \
+                                      -Dsonar.token=${SONAR_TOKEN} \
+                                      -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+                                """
+                            }
                         }
                     }
                 }
