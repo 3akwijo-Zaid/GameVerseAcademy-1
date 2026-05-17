@@ -15,7 +15,7 @@ pipeline {
         NEXUS_DOCKER_REG   = 'localhost:8082'          // Docker registry on Nexus (host port)
         NEXUS_CREDS        = credentials('nexus-credentials')
 
-        SONAR_HOST     = 'http://localhost:9000'
+        SONAR_HOST     = 'http://sonarqube:9000'
 
         EMAIL_RECIPIENT = 'team@esi.ac.ma'
     }
