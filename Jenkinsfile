@@ -29,77 +29,46 @@ pipeline {
         // ══════════════════════════════════════════════════════
         stage('SCM Polling') {
         // ══════════════════════════════════════════════════════
-            stages {
-
-                stage('Checkout Source Code') {
-                    steps {
-                        echo '[SCM] Trigger  : pollSCM — interval: H/5 * * * * (every 5 min)'
-                        echo '[SCM] Source   : GitHub repository (configured in Jenkins job)'
-                        echo '[SCM] Workspace: ${WORKSPACE}'
-                        checkout scm
-                    }
+            steps {
+                echo '[SCM] Trigger  : pollSCM — interval: H/5 * * * * (every 5 min)'
+                echo '[SCM] Checkout : cloning/updating workspace from GitHub'
+                checkout scm
+                script {
+                    env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    env.GIT_AUTHOR       = sh(script: 'git log -1 --format="%an <%ae>"', returnStdout: true).trim()
+                    env.GIT_MSG          = sh(script: 'git log -1 --format="%s"', returnStdout: true).trim()
+                    env.GIT_DATE         = sh(script: 'git log -1 --format="%cd" --date=format:"%Y-%m-%d %H:%M"', returnStdout: true).trim()
+                    env.GIT_BRANCH_NAME  = env.GIT_BRANCH ?: sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
+                    env.CHANGED_COUNT    = sh(script: 'git diff --name-only HEAD~1 HEAD 2>/dev/null | wc -l || echo 0', returnStdout: true).trim()
                 }
-
-                stage('Read Commit Metadata') {
-                    steps {
-                        echo '[SCM] Extracting branch, commit hash, author, date, changed files'
-                        script {
-                            env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                            env.GIT_AUTHOR       = sh(script: 'git log -1 --format="%an <%ae>"', returnStdout: true).trim()
-                            env.GIT_MSG          = sh(script: 'git log -1 --format="%s"', returnStdout: true).trim()
-                            env.GIT_DATE         = sh(script: 'git log -1 --format="%cd" --date=format:"%Y-%m-%d %H:%M"', returnStdout: true).trim()
-                            env.GIT_BRANCH_NAME  = env.GIT_BRANCH ?: sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
-                            env.CHANGED_COUNT    = sh(script: 'git diff --name-only HEAD~1 HEAD 2>/dev/null | wc -l || echo 0', returnStdout: true).trim()
-                        }
-                        echo "[SCM] Branch   : ${env.GIT_BRANCH_NAME}"
-                        echo "[SCM] Commit   : ${env.GIT_COMMIT_SHORT}"
-                        echo "[SCM] Author   : ${env.GIT_AUTHOR}"
-                        echo "[SCM] Date     : ${env.GIT_DATE}"
-                        echo "[SCM] Message  : ${env.GIT_MSG}"
-                        echo "[SCM] Changed  : ${env.CHANGED_COUNT} file(s)"
-                    }
-                }
-
-                stage('List Changed Files') {
-                    steps {
-                        echo '[SCM] Files modified since previous commit:'
-                        sh 'git diff --name-status HEAD~1 HEAD 2>/dev/null || echo "(no previous commit)"'
-                    }
-                }
+                echo "[SCM] Branch   : ${env.GIT_BRANCH_NAME}"
+                echo "[SCM] Commit   : ${env.GIT_COMMIT_SHORT}  |  Author: ${env.GIT_AUTHOR}  |  Date: ${env.GIT_DATE}"
+                echo "[SCM] Message  : ${env.GIT_MSG}"
+                echo "[SCM] Changed  : ${env.CHANGED_COUNT} file(s) since previous commit"
+                sh 'git diff --name-status HEAD~1 HEAD 2>/dev/null || true'
             }
         }
 
         // ══════════════════════════════════════════════════════
         stage('Build') {
         // ══════════════════════════════════════════════════════
+            // sequential: clean must finish before compile
             stages {
-
-                stage('Clean Workspace') {
+                stage('Clean') {
                     steps {
-                        echo '[Build] Goal   : mvn clean'
-                        echo '[Build] Deletes: target/ directory and all previous build output'
+                        echo '[Build › Clean] Goal: mvn clean — deleting target/ directory'
                         sh 'mvn clean --no-transfer-progress -q'
                     }
                 }
-
-                stage('Compile Sources') {
+                stage('Compile') {
                     steps {
-                        echo '[Build] Goal   : mvn compile'
-                        echo '[Build] Input  : src/main/java'
-                        echo '[Build] Output : target/classes'
-                        echo '[Build] JDK    : 21 (eclipse-temurin)'
+                        echo '[Build › Compile] Goal: mvn compile'
+                        echo '[Build › Compile] Input : src/main/java  |  Output: target/classes  |  JDK: 21'
                         sh 'mvn compile --no-transfer-progress'
-                    }
-                }
-
-                stage('Verify Build Output') {
-                    steps {
-                        echo '[Build] Counting compiled classes in target/classes'
                         script {
                             def count = sh(script: 'find target/classes -name "*.class" | wc -l', returnStdout: true).trim()
-                            echo "[Build] Classes: ${count} .class files produced"
+                            echo "[Build › Compile] ${count} classes compiled in target/classes"
                         }
-                        sh 'find target/classes -name "*.class" | sort'
                     }
                 }
             }
@@ -108,47 +77,38 @@ pipeline {
         // ══════════════════════════════════════════════════════
         stage('Test & Coverage') {
         // ══════════════════════════════════════════════════════
+            // sequential: tests must finish before reports are published
             stages {
-
-                stage('Run Unit Tests') {
+                stage('Unit Tests') {
                     steps {
-                        echo '[Test] Framework : JUnit 5'
-                        echo '[Test] Plugin    : Maven Surefire'
-                        echo '[Test] Goal      : mvn test'
-                        echo '[Test] Sources   : src/test/java'
-                        echo '[Test] Reports   : target/surefire-reports/*.xml'
+                        echo '[Test › Unit Tests] Framework: JUnit 5  |  Plugin: Maven Surefire'
+                        echo '[Test › Unit Tests] Goal: mvn test  |  Sources: src/test/java'
+                        echo '[Test › Unit Tests] Reports: target/surefire-reports/*.xml'
                         sh 'mvn test --no-transfer-progress'
                     }
                 }
-
-                stage('Publish Test Reports') {
+                stage('JUnit Report') {
                     steps {
-                        echo '[Test] Publishing JUnit XML reports → Jenkins Test Results tab'
-                        echo '[Test] Pattern: target/surefire-reports/*.xml'
+                        echo '[Test › JUnit Report] Publishing XML reports from target/surefire-reports/'
                         junit 'target/surefire-reports/*.xml'
                         script {
                             try {
                                 def tr = currentBuild.rawBuild.getAction(hudson.tasks.junit.TestResultAction.class)
                                 if (tr) {
-                                    echo "[Test] Passed : ${tr.passCount}  |  Failed: ${tr.failCount}  |  Skipped: ${tr.skipCount}  |  Total: ${tr.totalCount}"
-                                } else {
-                                    echo '[Test] Results published — see Test Results tab in Jenkins sidebar'
+                                    echo "[Test › JUnit Report] Passed: ${tr.passCount}  |  Failed: ${tr.failCount}  |  Skipped: ${tr.skipCount}  |  Total: ${tr.totalCount}"
                                 }
                             } catch (e) {
-                                echo '[Test] Results published — see Test Results tab in Jenkins sidebar'
+                                echo '[Test › JUnit Report] Results published — see Test Results tab'
                             }
                         }
                     }
                 }
-
-                stage('Publish Coverage Report') {
+                stage('JaCoCo Coverage') {
                     steps {
-                        echo '[Coverage] Tool   : JaCoCo'
-                        echo '[Coverage] Exec   : target/jacoco.exec'
-                        echo '[Coverage] Classes: target/classes'
-                        echo '[Coverage] Sources: src/main/java'
-                        echo '[Coverage] HTML   : target/site/jacoco/index.html'
-                        echo '[Coverage] XML    : target/site/jacoco/jacoco.xml'
+                        echo '[Test › JaCoCo] Exec   : target/jacoco.exec'
+                        echo '[Test › JaCoCo] Classes: target/classes  |  Sources: src/main/java'
+                        echo '[Test › JaCoCo] HTML   : target/site/jacoco/index.html'
+                        echo '[Test › JaCoCo] XML    : target/site/jacoco/jacoco.xml'
                         jacoco(
                             execPattern:   'target/jacoco.exec',
                             classPattern:  'target/classes',
@@ -166,14 +126,12 @@ pipeline {
 
                 stage('SonarQube') {
                     stages {
-
-                        stage('Run SonarQube Analysis') {
+                        stage('SonarQube › Analyse') {
                             steps {
-                                echo "[Sonar] Server  : ${SONAR_HOST}"
-                                echo '[Sonar] Project : GameVerseAcademy'
-                                echo '[Sonar] Goal    : mvn sonar:sonar'
-                                echo '[Sonar] Input   : src/main/java + target/classes + target/site/jacoco/jacoco.xml'
-                                echo '[Sonar] Metrics : bugs, vulnerabilities, code smells, duplications, coverage, complexity'
+                                echo "[Sonar] Server : ${SONAR_HOST}  |  Project: GameVerseAcademy"
+                                echo '[Sonar] Goal   : mvn sonar:sonar'
+                                echo '[Sonar] Input  : src/main/java + target/classes + target/site/jacoco/jacoco.xml'
+                                echo '[Sonar] Metrics: bugs, vulnerabilities, code smells, duplications, coverage'
                                 withSonarQubeEnv('SonarQube') {
                                     withCredentials([string(credentialsId: 'sonarqube-token', variable: 'SONAR_TOKEN')]) {
                                         sh """
@@ -188,48 +146,41 @@ pipeline {
                                 }
                             }
                         }
-
-                        stage('Report SonarQube Results') {
+                        stage('SonarQube › Report') {
                             steps {
-                                echo "[Sonar] Analysis submitted to ${SONAR_HOST}"
                                 echo "[Sonar] Dashboard: ${SONAR_HOST}/dashboard?id=GameVerseAcademy"
-                                echo '[Sonar] Quality Gate result visible in SonarQube UI'
+                                echo '[Sonar] Metrics  : bugs, vulnerabilities, code smells, coverage, duplications'
                             }
                         }
                     }
                 }
 
-                stage('Checkstyle & PMD') {
+                stage('Static Analysis') {
                     stages {
-
-                        stage('Run Checkstyle') {
+                        stage('Static › Checkstyle') {
                             steps {
                                 echo '[Checkstyle] Goal  : mvn checkstyle:check'
                                 echo '[Checkstyle] Rules : Google Java Style'
-                                echo '[Checkstyle] Input : src/main/java'
-                                echo '[Checkstyle] Report: target/checkstyle-result.xml'
+                                echo '[Checkstyle] Input : src/main/java  |  Report: target/checkstyle-result.xml'
                                 sh 'mvn checkstyle:check --no-transfer-progress || true'
                             }
                         }
-
-                        stage('Run PMD') {
+                        stage('Static › PMD') {
                             steps {
                                 echo '[PMD] Goal  : mvn pmd:check'
-                                echo '[PMD] Detects: dead code, unused variables, empty blocks, suboptimal patterns'
-                                echo '[PMD] Input : src/main/java'
-                                echo '[PMD] Report: target/pmd.xml'
+                                echo '[PMD] Detects: dead code, empty blocks, unused vars, suboptimal patterns'
+                                echo '[PMD] Input : src/main/java  |  Report: target/pmd.xml'
                                 sh 'mvn pmd:check --no-transfer-progress || true'
                             }
                         }
-
-                        stage('Record Issues') {
+                        stage('Static › Record Issues') {
                             steps {
                                 echo '[Warnings NG] Aggregating: target/checkstyle-result.xml + target/pmd.xml'
-                                echo '[Warnings NG] Results visible in Jenkins sidebar → Warnings tab'
                                 recordIssues(tools: [
                                     checkStyle(pattern: 'target/checkstyle-result.xml'),
                                     pmdParser(pattern: 'target/pmd.xml')
                                 ])
+                                echo '[Warnings NG] Results visible in Jenkins sidebar → Warnings tab'
                             }
                         }
                     }
@@ -240,45 +191,35 @@ pipeline {
         // ══════════════════════════════════════════════════════
         stage('Quality Gate') {
         // ══════════════════════════════════════════════════════
-            stages {
-
-                stage('Evaluate Gate') {
-                    steps {
-                        echo "[Quality Gate] SonarQube server: ${SONAR_HOST}"
-                        echo '[Quality Gate] Thresholds: coverage ≥ 80% | reliability A | security A | maintainability A'
-                        echo '[Quality Gate] Result: see SonarQube dashboard (gate enforcement skipped in pipeline)'
-                    }
-                }
+            steps {
+                echo "[Quality Gate] SonarQube: ${SONAR_HOST}/dashboard?id=GameVerseAcademy"
+                echo '[Quality Gate] Thresholds: coverage ≥ 80% | reliability A | security A | maintainability A'
+                echo '[Quality Gate] Status: see SonarQube dashboard — gate enforcement skipped in pipeline'
             }
         }
 
         // ══════════════════════════════════════════════════════
         stage('Package & Archive') {
         // ══════════════════════════════════════════════════════
+            // sequential: JAR must exist before archiving
             stages {
-
-                stage('Build Fat JAR') {
+                stage('Package › Build JAR') {
                     steps {
                         echo '[Package] Goal  : mvn package -DskipTests'
                         echo '[Package] Plugin: maven-shade-plugin (uber/fat JAR)'
-                        echo '[Package] Input : target/classes + dependencies'
                         echo "[Package] Output: target/GameVerseAcademy-${APP_VERSION}.jar"
                         sh 'mvn package -DskipTests --no-transfer-progress'
                     }
                 }
-
-                stage('Archive Artifact') {
+                stage('Package › Archive') {
                     steps {
-                        echo '[Archive] Pattern    : target/*.jar'
-                        echo '[Archive] Destination: Jenkins build artifacts'
+                        echo '[Archive] Pattern    : target/*.jar → Jenkins build artifacts'
                         echo '[Archive] Fingerprint: SHA-1 hash tracked per build'
                         archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
                         script {
                             def jar  = sh(script: 'ls target/GameVerseAcademy-*.jar', returnStdout: true).trim()
                             def size = sh(script: "du -sh ${jar} | awk '{print \$1}'", returnStdout: true).trim()
-                            echo "[Archive] File : ${jar}"
-                            echo "[Archive] Size : ${size}"
-                            echo "[Archive] Build: #${BUILD_NUMBER}"
+                            echo "[Archive] File: ${jar}  |  Size: ${size}  |  Build: #${BUILD_NUMBER}"
                         }
                     }
                 }
@@ -286,135 +227,84 @@ pipeline {
         }
 
         // ══════════════════════════════════════════════════════
-        stage('Deploy to Nexus') {
+        stage('Publish & Containerise') {
         // ══════════════════════════════════════════════════════
-            stages {
+            // parallel: Nexus Maven upload and Docker pipeline are independent
+            parallel {
 
-                stage('Upload to maven-snapshots') {
-                    steps {
-                        echo "[Nexus] Server    : ${NEXUS_URL}"
-                        echo '[Nexus] Repository: maven-snapshots'
-                        echo '[Nexus] Goal      : mvn deploy -DskipTests'
-                        echo '[Nexus] Settings  : /var/jenkins_home/.m2/settings.xml'
-                        echo '[Nexus] Server ID : nexus (matches distributionManagement in pom.xml)'
-                        withCredentials([usernamePassword(credentialsId: 'nexus-credentials',
-                                                          usernameVariable: 'NEXUS_USER',
-                                                          passwordVariable: 'NEXUS_PASS')]) {
-                            sh """
-                                mvn deploy -DskipTests --no-transfer-progress \
-                                  -s /var/jenkins_home/.m2/settings.xml \
-                                  -Darguments="-DskipTests" \
-                                  -Dnexus.username=${NEXUS_USER} \
-                                  -Dnexus.password=${NEXUS_PASS}
-                            """
+                stage('Deploy to Nexus') {
+                    stages {
+                        stage('Nexus › Upload') {
+                            steps {
+                                echo "[Nexus] Server    : ${NEXUS_URL}"
+                                echo '[Nexus] Repository: maven-snapshots'
+                                echo '[Nexus] Goal      : mvn deploy -DskipTests'
+                                echo '[Nexus] Settings  : /var/jenkins_home/.m2/settings.xml  |  Server ID: nexus'
+                                withCredentials([usernamePassword(credentialsId: 'nexus-credentials',
+                                                                  usernameVariable: 'NEXUS_USER',
+                                                                  passwordVariable: 'NEXUS_PASS')]) {
+                                    sh """
+                                        mvn deploy -DskipTests --no-transfer-progress \
+                                          -s /var/jenkins_home/.m2/settings.xml \
+                                          -Darguments="-DskipTests" \
+                                          -Dnexus.username=${NEXUS_USER} \
+                                          -Dnexus.password=${NEXUS_PASS}
+                                    """
+                                }
+                            }
+                        }
+                        stage('Nexus › Verify') {
+                            steps {
+                                echo "[Nexus] Artifact uploaded: GameVerseAcademy-${APP_VERSION}.jar"
+                                echo "[Nexus] Browse: ${NEXUS_URL}/#browse/browse:maven-snapshots"
+                            }
                         }
                     }
                 }
 
-                stage('Verify Upload') {
-                    steps {
-                        echo "[Nexus] Artifact uploaded successfully"
-                        echo "[Nexus] Browse: ${NEXUS_URL}/#browse/browse:maven-snapshots"
-                        echo "[Nexus] Group  : ma.ac.esi  |  Artifact: GameVerseAcademy  |  Version: ${APP_VERSION}"
-                    }
-                }
-            }
-        }
-
-        // ══════════════════════════════════════════════════════
-        stage('Docker Build') {
-        // ══════════════════════════════════════════════════════
-            stages {
-
-                stage('Build Image') {
-                    steps {
-                        echo "[Docker] Image     : ${DOCKER_IMAGE}"
-                        echo '[Docker] Context   : ./'
-                        echo '[Docker] Dockerfile: ./Dockerfile'
-                        echo '[Docker] Base image: eclipse-temurin:21-jre-alpine'
-                        echo '[Docker] COPY      : target/GameVerseAcademy-*.jar → /app/app.jar'
-                        echo '[Docker] EXPOSE    : 6060'
-                        echo '[Docker] ENTRYPOINT: java -jar /app/app.jar'
-                        sh "docker build -t ${DOCKER_IMAGE} ."
-                    }
-                }
-
-                stage('Inspect Image') {
-                    steps {
-                        echo "[Docker] Verifying image: ${DOCKER_IMAGE}"
-                        sh "docker image inspect ${DOCKER_IMAGE} --format 'ID={{.Id}}  Created={{.Created}}  OS={{.Os}}/{{.Architecture}}'"
-                        script {
-                            def bytes = sh(script: "docker image inspect ${DOCKER_IMAGE} --format '{{.Size}}'", returnStdout: true).trim().toLong()
-                            def mb    = String.format("%.1f MB", bytes / 1024 / 1024)
-                            echo "[Docker] Size: ${mb}  |  Tag: ${DOCKER_IMAGE}"
+                stage('Docker Pipeline') {
+                    stages {
+                        stage('Docker › Build') {
+                            steps {
+                                echo "[Docker] Image     : ${DOCKER_IMAGE}"
+                                echo '[Docker] Dockerfile: ./Dockerfile'
+                                echo '[Docker] Base      : eclipse-temurin:21-jre-alpine'
+                                echo '[Docker] COPY      : target/GameVerseAcademy-*.jar → /app/app.jar'
+                                echo '[Docker] EXPOSE    : 6060'
+                                sh "docker build -t ${DOCKER_IMAGE} ."
+                                script {
+                                    def bytes = sh(script: "docker image inspect ${DOCKER_IMAGE} --format '{{.Size}}'", returnStdout: true).trim().toLong()
+                                    echo "[Docker] Size: ${String.format('%.1f MB', bytes / 1024 / 1024)}  |  Tag: ${DOCKER_IMAGE}"
+                                }
+                            }
                         }
-                    }
-                }
-            }
-        }
-
-        // ══════════════════════════════════════════════════════
-        stage('Trivy Security Scan') {
-        // ══════════════════════════════════════════════════════
-            stages {
-
-                stage('Scan Image') {
-                    steps {
-                        echo "[Trivy] Scanner   : aquasec/trivy (latest)"
-                        echo "[Trivy] Target    : ${DOCKER_IMAGE}"
-                        echo '[Trivy] Socket    : /var/run/docker.sock (Docker-in-Docker)'
-                        echo '[Trivy] Severities: HIGH, CRITICAL'
-                        echo '[Trivy] Format    : table'
-                        echo '[Trivy] Exit code : 0 → report-only (set to 1 to block pipeline on CVEs)'
-                        sh """
-                            docker run --rm \
-                              -v /var/run/docker.sock:/var/run/docker.sock \
-                              aquasec/trivy image \
-                                --exit-code 0 \
-                                --severity HIGH,CRITICAL \
-                                --format table \
-                                ${DOCKER_IMAGE}
-                        """
-                    }
-                }
-
-                stage('Report Vulnerabilities') {
-                    steps {
-                        echo '[Trivy] Scan complete — review CVE table above'
-                        echo '[Trivy] To enforce a hard gate: change --exit-code 0 → --exit-code 1'
-                    }
-                }
-            }
-        }
-
-        // ══════════════════════════════════════════════════════
-        stage('Push to Nexus Docker Registry') {
-        // ══════════════════════════════════════════════════════
-            stages {
-
-                stage('Login to Registry') {
-                    steps {
-                        echo "[Docker Push] Registry: ${NEXUS_DOCKER_REG}"
-                        echo '[Docker Push] Auth    : nexus-credentials (Jenkins credential store)'
-                        echo '[Docker Push] Realm   : Docker Bearer Token Realm (enabled in Nexus)'
-                        sh "docker login ${NEXUS_DOCKER_REG} -u ${NEXUS_CREDS_USR} -p ${NEXUS_CREDS_PSW}"
-                    }
-                }
-
-                stage('Tag Image') {
-                    steps {
-                        echo "[Docker Push] Source: ${DOCKER_IMAGE}"
-                        echo "[Docker Push] Target: ${NEXUS_DOCKER_REG}/${DOCKER_IMAGE}"
-                        sh "docker tag ${DOCKER_IMAGE} ${NEXUS_DOCKER_REG}/${DOCKER_IMAGE}"
-                    }
-                }
-
-                stage('Push Image') {
-                    steps {
-                        echo "[Docker Push] Pushing layers to ${NEXUS_DOCKER_REG}"
-                        sh "docker push ${NEXUS_DOCKER_REG}/${DOCKER_IMAGE}"
-                        echo "[Docker Push] Image available: ${NEXUS_DOCKER_REG}/${DOCKER_IMAGE}"
-                        echo "[Docker Push] Catalog       : http://localhost:8082/v2/_catalog"
+                        stage('Docker › Trivy Scan') {
+                            steps {
+                                echo "[Trivy] Target    : ${DOCKER_IMAGE}"
+                                echo '[Trivy] Socket    : /var/run/docker.sock'
+                                echo '[Trivy] Severities: HIGH, CRITICAL  |  Format: table  |  Exit code: 0 (report-only)'
+                                sh """
+                                    docker run --rm \
+                                      -v /var/run/docker.sock:/var/run/docker.sock \
+                                      aquasec/trivy image \
+                                        --exit-code 0 \
+                                        --severity HIGH,CRITICAL \
+                                        --format table \
+                                        ${DOCKER_IMAGE}
+                                """
+                            }
+                        }
+                        stage('Docker › Push') {
+                            steps {
+                                echo "[Docker Push] Registry: ${NEXUS_DOCKER_REG}  |  Auth: nexus-credentials"
+                                sh "docker login ${NEXUS_DOCKER_REG} -u ${NEXUS_CREDS_USR} -p ${NEXUS_CREDS_PSW}"
+                                echo "[Docker Push] Tag: ${DOCKER_IMAGE} → ${NEXUS_DOCKER_REG}/${DOCKER_IMAGE}"
+                                sh "docker tag ${DOCKER_IMAGE} ${NEXUS_DOCKER_REG}/${DOCKER_IMAGE}"
+                                echo "[Docker Push] Pushing to ${NEXUS_DOCKER_REG}/${DOCKER_IMAGE}"
+                                sh "docker push ${NEXUS_DOCKER_REG}/${DOCKER_IMAGE}"
+                                echo "[Docker Push] Catalog: http://localhost:8082/v2/_catalog"
+                            }
+                        }
                     }
                 }
             }
@@ -424,26 +314,21 @@ pipeline {
         stage('Deploy to k3s via Helm') {
         // ══════════════════════════════════════════════════════
             stages {
-
-                stage('Verify Environment') {
+                stage('Helm › Verify Environment') {
                     steps {
                         echo '[Helm] Verifying Helm CLI and kubeconfig'
                         sh 'helm version --short'
-                        echo '[kubectl] Current cluster context:'
-                        sh 'kubectl config current-context'
                         echo '[kubectl] Kubeconfig: /var/jenkins_home/.kube/config → https://192.168.1.9:6443'
+                        sh 'kubectl config current-context'
                     }
                 }
-
-                stage('Helm Upgrade Install') {
+                stage('Helm › Deploy') {
                     steps {
-                        echo "[Helm] Release   : ${APP_NAME}"
+                        echo "[Helm] Release   : ${APP_NAME}  |  Namespace: production"
                         echo '[Helm] Chart     : ./charts/gameverseacademy'
-                        echo '[Helm] Namespace : production'
                         echo "[Helm] Image     : ${NEXUS_DOCKER_REG}/${APP_NAME}:${BUILD_NUMBER}"
-                        echo '[Helm] Strategy  : upgrade --install (creates release if it does not exist)'
-                        echo '[Helm] Pull secret: nexus-registry (pre-created in production namespace)'
-                        echo '[Helm] Probes    : tcpSocket on port 6060'
+                        echo '[Helm] Strategy  : upgrade --install'
+                        echo '[Helm] Pull secret: nexus-registry  |  Probes: tcpSocket port 6060'
                         sh """
                             helm upgrade --install ${APP_NAME} ./charts/${APP_NAME} \
                               --namespace production \
@@ -453,10 +338,9 @@ pipeline {
                         """
                     }
                 }
-
-                stage('Verify Deployment') {
+                stage('Helm › Verify Deployment') {
                     steps {
-                        echo '[Helm] Fetching release status'
+                        echo '[Helm] Release status:'
                         sh 'helm status gameverseacademy -n production'
                         echo '[kubectl] Pods in production namespace:'
                         sh 'kubectl get pods -n production'
