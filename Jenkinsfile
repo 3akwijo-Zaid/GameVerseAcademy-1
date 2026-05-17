@@ -129,11 +129,17 @@ pipeline {
         stage('Deploy to Nexus') {
         // ─────────────────────────────────────────
             steps {
-                sh """
-                    mvn deploy -DskipTests --no-transfer-progress \
-                      -Dnexus.url=${NEXUS_URL} \
-                      -s /var/jenkins_home/.m2/settings.xml
-                """
+                withCredentials([usernamePassword(credentialsId: 'nexus-credentials',
+                                                  usernameVariable: 'NEXUS_USER',
+                                                  passwordVariable: 'NEXUS_PASS')]) {
+                    sh """
+                        mvn deploy -DskipTests --no-transfer-progress \
+                          -s /var/jenkins_home/.m2/settings.xml \
+                          -Darguments="-DskipTests" \
+                          -Dnexus.username=${NEXUS_USER} \
+                          -Dnexus.password=${NEXUS_PASS}
+                    """
+                }
             }
         }
 
