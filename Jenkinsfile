@@ -127,11 +127,16 @@ pipeline {
                         echo '[Test] Pattern: target/surefire-reports/*.xml'
                         junit 'target/surefire-reports/*.xml'
                         script {
-                            def total   = currentBuild.testResultAction?.totalCount ?: '?'
-                            def failed  = currentBuild.testResultAction?.failCount   ?: '0'
-                            def skipped = currentBuild.testResultAction?.skipCount   ?: '0'
-                            def passed  = (total == '?') ? '?' : (total.toInteger() - failed.toInteger() - skipped.toInteger())
-                            echo "[Test] Passed : ${passed}  |  Failed: ${failed}  |  Skipped: ${skipped}  |  Total: ${total}"
+                            try {
+                                def tr = currentBuild.rawBuild.getAction(hudson.tasks.junit.TestResultAction.class)
+                                if (tr) {
+                                    echo "[Test] Passed : ${tr.passCount}  |  Failed: ${tr.failCount}  |  Skipped: ${tr.skipCount}  |  Total: ${tr.totalCount}"
+                                } else {
+                                    echo '[Test] Results published — see Test Results tab in Jenkins sidebar'
+                                }
+                            } catch (e) {
+                                echo '[Test] Results published — see Test Results tab in Jenkins sidebar'
+                            }
                         }
                     }
                 }
