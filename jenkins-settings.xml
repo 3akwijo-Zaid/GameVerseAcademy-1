@@ -1,0 +1,24 @@
+<!-- Place this file at /var/jenkins_home/.m2/settings.xml inside the Jenkins container -->
+<!-- It injects Nexus credentials so 'mvn deploy' can authenticate -->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0
+            https://maven.apache.org/xsd/settings-1.2.0.xsd">
+
+  <servers>
+    <server>
+      <id>nexus</id>  <!-- must match <id> in pom.xml distributionManagement -->
+      <username>${env.NEXUS_CREDS_USR}</username>
+      <password>${env.NEXUS_CREDS_PSW}</password>
+    </server>
+  </servers>
+
+  <mirrors>
+    <mirror>
+      <id>nexus-mirror</id>
+      <mirrorOf>central</mirrorOf>
+      <url>http://localhost:8081/repository/maven-public/</url>
+    </mirror>
+  </mirrors>
+
+</settings>

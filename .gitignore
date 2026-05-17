@@ -22,3 +22,5 @@ dependency-reduced-pom.xml
 # Ignorer les fichiers de logs et de crashs
 *.log
 crash-*
+
+.env

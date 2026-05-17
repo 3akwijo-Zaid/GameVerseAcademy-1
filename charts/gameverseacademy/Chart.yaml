@@ -1,0 +1,9 @@
+apiVersion: v2
+name: gameverseacademy
+description: GameVerseAcademy — Helm chart for k3s deployment
+type: application
+version: 0.1.0
+appVersion: "0.0.1-SNAPSHOT"
+maintainers:
+  - name: ESI Rabat
+    email: team@esi.ac.ma
