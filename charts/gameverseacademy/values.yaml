@@ -10,7 +10,7 @@ image:
 
 service:
   type: ClusterIP
-  port: 8080
+  port: 6060
 
 ingress:
   enabled: false
@@ -33,14 +33,16 @@ env:
 
 livenessProbe:
   httpGet:
-    path: /
-    port: 8080
-  initialDelaySeconds: 30
-  periodSeconds: 10
+    path: /gameverseacademy/
+    port: 6060
+  initialDelaySeconds: 60
+  periodSeconds: 15
+  failureThreshold: 5
 
 readinessProbe:
   httpGet:
-    path: /
-    port: 8080
-  initialDelaySeconds: 20
-  periodSeconds: 5
+    path: /gameverseacademy/
+    port: 6060
+  initialDelaySeconds: 45
+  periodSeconds: 10
+  failureThreshold: 5

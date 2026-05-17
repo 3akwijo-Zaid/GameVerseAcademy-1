@@ -8,7 +8,7 @@ WORKDIR /app
 # Copy the fat JAR produced by maven-shade-plugin
 COPY target/GameVerseAcademy-*.jar app.jar
 
-# Embedded Tomcat listens on 8080
-EXPOSE 8080
+# App listens on 6060
+EXPOSE 6060
 
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
