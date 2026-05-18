@@ -30,7 +30,7 @@ pipeline {
         stage('SCM Polling') {
         // ══════════════════════════════════════════════════════
             steps {
-                echo '[SCM] Trigger  : pollSCM — interval: H/5 * * * * (every 5 min)'
+                echo '[SCM] Trigger  : pollSCM — interval H/5 * * * * (every 5 min)'
                 echo '[SCM] Checkout : cloning/updating workspace from GitHub'
                 checkout scm
                 script {
@@ -41,10 +41,10 @@ pipeline {
                     env.GIT_BRANCH_NAME  = env.GIT_BRANCH ?: sh(script: 'git rev-parse --abbrev-ref HEAD', returnStdout: true).trim()
                     env.CHANGED_COUNT    = sh(script: 'git diff --name-only HEAD~1 HEAD 2>/dev/null | wc -l || echo 0', returnStdout: true).trim()
                 }
-                echo "[SCM] Branch   : ${env.GIT_BRANCH_NAME}"
-                echo "[SCM] Commit   : ${env.GIT_COMMIT_SHORT}  |  Author: ${env.GIT_AUTHOR}  |  Date: ${env.GIT_DATE}"
-                echo "[SCM] Message  : ${env.GIT_MSG}"
-                echo "[SCM] Changed  : ${env.CHANGED_COUNT} file(s) since previous commit"
+                echo "[SCM] Branch  : ${env.GIT_BRANCH_NAME}"
+                echo "[SCM] Commit  : ${env.GIT_COMMIT_SHORT}  |  Author: ${env.GIT_AUTHOR}  |  Date: ${env.GIT_DATE}"
+                echo "[SCM] Message : ${env.GIT_MSG}"
+                echo "[SCM] Changed : ${env.CHANGED_COUNT} file(s) since previous commit"
                 sh 'git diff --name-status HEAD~1 HEAD 2>/dev/null || true'
             }
         }
@@ -52,24 +52,17 @@ pipeline {
         // ══════════════════════════════════════════════════════
         stage('Build') {
         // ══════════════════════════════════════════════════════
-            // sequential: clean must finish before compile
-            stages {
-                stage('Clean') {
-                    steps {
-                        echo '[Build › Clean] Goal: mvn clean — deleting target/ directory'
-                        sh 'mvn clean --no-transfer-progress -q'
-                    }
-                }
-                stage('Compile') {
-                    steps {
-                        echo '[Build › Compile] Goal: mvn compile'
-                        echo '[Build › Compile] Input : src/main/java  |  Output: target/classes  |  JDK: 21'
-                        sh 'mvn compile --no-transfer-progress'
-                        script {
-                            def count = sh(script: 'find target/classes -name "*.class" | wc -l', returnStdout: true).trim()
-                            echo "[Build › Compile] ${count} classes compiled in target/classes"
-                        }
-                    }
+            steps {
+                echo '[Build › Clean]   Goal: mvn clean — deleting target/ directory'
+                sh 'mvn clean --no-transfer-progress -q'
+
+                echo '[Build › Compile] Goal: mvn compile'
+                echo '[Build › Compile] Input : src/main/java  |  Output: target/classes  |  JDK: 21'
+                sh 'mvn compile --no-transfer-progress'
+
+                script {
+                    def count = sh(script: 'find target/classes -name "*.class" | wc -l', returnStdout: true).trim()
+                    echo "[Build › Result]  ${count} classes compiled in target/classes"
                 }
             }
         }
@@ -77,45 +70,31 @@ pipeline {
         // ══════════════════════════════════════════════════════
         stage('Test & Coverage') {
         // ══════════════════════════════════════════════════════
-            // sequential: tests must finish before reports are published
-            stages {
-                stage('Unit Tests') {
-                    steps {
-                        echo '[Test › Unit Tests] Framework: JUnit 5  |  Plugin: Maven Surefire'
-                        echo '[Test › Unit Tests] Goal: mvn test  |  Sources: src/test/java'
-                        echo '[Test › Unit Tests] Reports: target/surefire-reports/*.xml'
-                        sh 'mvn test --no-transfer-progress'
-                    }
-                }
-                stage('JUnit Report') {
-                    steps {
-                        echo '[Test › JUnit Report] Publishing XML reports from target/surefire-reports/'
-                        junit 'target/surefire-reports/*.xml'
-                        script {
-                            try {
-                                def tr = currentBuild.rawBuild.getAction(hudson.tasks.junit.TestResultAction.class)
-                                if (tr) {
-                                    echo "[Test › JUnit Report] Passed: ${tr.passCount}  |  Failed: ${tr.failCount}  |  Skipped: ${tr.skipCount}  |  Total: ${tr.totalCount}"
-                                }
-                            } catch (e) {
-                                echo '[Test › JUnit Report] Results published — see Test Results tab'
-                            }
+            steps {
+                echo '[Test › Unit Tests] Framework: JUnit 5  |  Plugin: Maven Surefire'
+                echo '[Test › Unit Tests] Goal: mvn test  |  Sources: src/test/java  |  Reports: target/surefire-reports/*.xml'
+                sh 'mvn test --no-transfer-progress'
+
+                echo '[Test › JUnit]     Publishing XML reports from target/surefire-reports/'
+                junit 'target/surefire-reports/*.xml'
+                script {
+                    try {
+                        def tr = currentBuild.rawBuild.getAction(hudson.tasks.junit.TestResultAction.class)
+                        if (tr) {
+                            echo "[Test › JUnit]     Passed: ${tr.passCount}  |  Failed: ${tr.failCount}  |  Skipped: ${tr.skipCount}  |  Total: ${tr.totalCount}"
                         }
+                    } catch (e) {
+                        echo '[Test › JUnit]     Results published — see Test Results tab'
                     }
                 }
-                stage('JaCoCo Coverage') {
-                    steps {
-                        echo '[Test › JaCoCo] Exec   : target/jacoco.exec'
-                        echo '[Test › JaCoCo] Classes: target/classes  |  Sources: src/main/java'
-                        echo '[Test › JaCoCo] HTML   : target/site/jacoco/index.html'
-                        echo '[Test › JaCoCo] XML    : target/site/jacoco/jacoco.xml'
-                        jacoco(
-                            execPattern:   'target/jacoco.exec',
-                            classPattern:  'target/classes',
-                            sourcePattern: 'src/main/java'
-                        )
-                    }
-                }
+
+                echo '[Test › JaCoCo]    Exec: target/jacoco.exec  |  Classes: target/classes  |  Sources: src/main/java'
+                echo '[Test › JaCoCo]    HTML: target/site/jacoco/index.html  |  XML: target/site/jacoco/jacoco.xml'
+                jacoco(
+                    execPattern:   'target/jacoco.exec',
+                    classPattern:  'target/classes',
+                    sourcePattern: 'src/main/java'
+                )
             }
         }
 
@@ -167,20 +146,20 @@ pipeline {
                         }
                         stage('Static › PMD') {
                             steps {
-                                echo '[PMD] Goal  : mvn pmd:check'
+                                echo '[PMD] Goal   : mvn pmd:check'
                                 echo '[PMD] Detects: dead code, empty blocks, unused vars, suboptimal patterns'
-                                echo '[PMD] Input : src/main/java  |  Report: target/pmd.xml'
+                                echo '[PMD] Input  : src/main/java  |  Report: target/pmd.xml'
                                 sh 'mvn pmd:check --no-transfer-progress || true'
                             }
                         }
                         stage('Static › Record Issues') {
                             steps {
-                                echo '[Warnings NG] Aggregating: target/checkstyle-result.xml + target/pmd.xml'
+                                echo '[Warnings NG] Sources: target/checkstyle-result.xml + target/pmd.xml'
+                                echo '[Warnings NG] Results visible in Jenkins sidebar → Warnings tab'
                                 recordIssues(tools: [
                                     checkStyle(pattern: 'target/checkstyle-result.xml'),
                                     pmdParser(pattern: 'target/pmd.xml')
                                 ])
-                                echo '[Warnings NG] Results visible in Jenkins sidebar → Warnings tab'
                             }
                         }
                     }
@@ -201,27 +180,19 @@ pipeline {
         // ══════════════════════════════════════════════════════
         stage('Package & Archive') {
         // ══════════════════════════════════════════════════════
-            // sequential: JAR must exist before archiving
-            stages {
-                stage('Package › Build JAR') {
-                    steps {
-                        echo '[Package] Goal  : mvn package -DskipTests'
-                        echo '[Package] Plugin: maven-shade-plugin (uber/fat JAR)'
-                        echo "[Package] Output: target/GameVerseAcademy-${APP_VERSION}.jar"
-                        sh 'mvn package -DskipTests --no-transfer-progress'
-                    }
-                }
-                stage('Package › Archive') {
-                    steps {
-                        echo '[Archive] Pattern    : target/*.jar → Jenkins build artifacts'
-                        echo '[Archive] Fingerprint: SHA-1 hash tracked per build'
-                        archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-                        script {
-                            def jar  = sh(script: 'ls target/GameVerseAcademy-*.jar', returnStdout: true).trim()
-                            def size = sh(script: "du -sh ${jar} | awk '{print \$1}'", returnStdout: true).trim()
-                            echo "[Archive] File: ${jar}  |  Size: ${size}  |  Build: #${BUILD_NUMBER}"
-                        }
-                    }
+            steps {
+                echo '[Package › Build JAR] Goal  : mvn package -DskipTests'
+                echo '[Package › Build JAR] Plugin: maven-shade-plugin (uber/fat JAR)'
+                echo "[Package › Build JAR] Output: target/GameVerseAcademy-${APP_VERSION}.jar"
+                sh 'mvn package -DskipTests --no-transfer-progress'
+
+                echo '[Package › Archive]   Pattern    : target/*.jar → Jenkins build artifacts'
+                echo '[Package › Archive]   Fingerprint: SHA-1 hash tracked per build'
+                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                script {
+                    def jar  = sh(script: 'ls target/GameVerseAcademy-*.jar', returnStdout: true).trim()
+                    def size = sh(script: "du -sh ${jar} | awk '{print \$1}'", returnStdout: true).trim()
+                    echo "[Package › Archive]   File: ${jar}  |  Size: ${size}  |  Build: #${BUILD_NUMBER}"
                 }
             }
         }
@@ -229,7 +200,6 @@ pipeline {
         // ══════════════════════════════════════════════════════
         stage('Publish & Containerise') {
         // ══════════════════════════════════════════════════════
-            // parallel: Nexus Maven upload and Docker pipeline are independent
             parallel {
 
                 stage('Deploy to Nexus') {
