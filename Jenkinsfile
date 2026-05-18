@@ -351,9 +351,83 @@ pipeline {
     // ══════════════════════════════════════════════════════════
     post {
     // ══════════════════════════════════════════════════════════
-        success  { echo "[Pipeline] BUILD SUCCESSFUL — ${env.JOB_NAME} #${env.BUILD_NUMBER}" }
-        failure  { echo "[Pipeline] BUILD FAILED     — ${env.JOB_NAME} #${env.BUILD_NUMBER}" }
-        unstable { echo "[Pipeline] BUILD UNSTABLE   — ${env.JOB_NAME} #${env.BUILD_NUMBER}" }
-        always   { deleteDir() }
+        success {
+            mail(
+                to:      'amirachezaid@gmail.com',
+                subject: "✅ BUILD SUCCESSFUL — ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body:    """
+Build succeeded.
+
+Job        : ${env.JOB_NAME}
+Build      : #${env.BUILD_NUMBER}
+Branch     : ${env.GIT_BRANCH_NAME ?: env.GIT_BRANCH}
+Commit     : ${env.GIT_COMMIT_SHORT ?: env.GIT_COMMIT?.take(8)}
+Author     : ${env.GIT_AUTHOR ?: 'N/A'}
+Duration   : ${currentBuild.durationString}
+
+Console    : ${env.BUILD_URL}console
+Blue Ocean : ${env.BUILD_URL}display/redirect
+
+Stages completed:
+  ✔ SCM Polling
+  ✔ Build
+  ✔ Test & Coverage (107 tests)
+  ✔ Code Analysis (SonarQube + Checkstyle + PMD)
+  ✔ Quality Gate
+  ✔ Package & Archive
+  ✔ Deploy to Nexus (maven-snapshots)
+  ✔ Javadoc generated
+  ✔ Docker Build + Trivy Scan + Push to Nexus
+  ✔ Deploy to k3s (production namespace)
+
+App URL    : http://localhost:30606/gameverseacademy/LoginController
+SonarQube  : http://localhost:9000/dashboard?id=GameVerseAcademy
+Nexus      : http://localhost:8081/#browse/browse:maven-snapshots
+"""
+            )
+        }
+
+        failure {
+            mail(
+                to:      'amirachezaid@gmail.com',
+                subject: "❌ BUILD FAILED — ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body:    """
+Build failed.
+
+Job        : ${env.JOB_NAME}
+Build      : #${env.BUILD_NUMBER}
+Branch     : ${env.GIT_BRANCH_NAME ?: env.GIT_BRANCH}
+Commit     : ${env.GIT_COMMIT_SHORT ?: env.GIT_COMMIT?.take(8)}
+Author     : ${env.GIT_AUTHOR ?: 'N/A'}
+Duration   : ${currentBuild.durationString}
+
+Failed stage and error details:
+${env.BUILD_URL}console
+
+Blue Ocean : ${env.BUILD_URL}display/redirect
+"""
+            )
+        }
+
+        unstable {
+            mail(
+                to:      'amirachezaid@gmail.com',
+                subject: "⚠️ BUILD UNSTABLE — ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body:    """
+Build completed with warnings (test failures or quality issues).
+
+Job        : ${env.JOB_NAME}
+Build      : #${env.BUILD_NUMBER}
+Branch     : ${env.GIT_BRANCH_NAME ?: env.GIT_BRANCH}
+Commit     : ${env.GIT_COMMIT_SHORT ?: env.GIT_COMMIT?.take(8)}
+Duration   : ${currentBuild.durationString}
+
+Console    : ${env.BUILD_URL}console
+Blue Ocean : ${env.BUILD_URL}display/redirect
+"""
+            )
+        }
+
+        always { deleteDir() }
     }
 }
