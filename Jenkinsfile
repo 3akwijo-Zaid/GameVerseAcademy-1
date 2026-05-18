@@ -235,6 +235,29 @@ pipeline {
                     }
                 }
 
+                stage('Javadoc') {
+                    stages {
+                        stage('Javadoc › Generate') {
+                            steps {
+                                echo '[Javadoc] Goal   : mvn javadoc:javadoc'
+                                echo '[Javadoc] Config : show=private  |  doclint=none  |  failOnError=false'
+                                echo '[Javadoc] Input  : src/main/java'
+                                echo '[Javadoc] Output : target/site/apidocs/'
+                                sh 'mvn javadoc:javadoc --no-transfer-progress'
+                            }
+                        }
+                        stage('Javadoc › Publish') {
+                            steps {
+                                echo '[Javadoc] Publishing HTML report → Jenkins Javadoc tab'
+                                javadoc javadocDir: 'target/site/apidocs', keepAll: true
+                                echo '[Javadoc] Archiving javadoc JAR: target/*-javadoc.jar'
+                                archiveArtifacts artifacts: 'target/*-javadoc.jar', allowEmptyArchive: true, fingerprint: true
+                                echo '[Javadoc] Available in Jenkins sidebar → Javadoc tab'
+                            }
+                        }
+                    }
+                }
+
                 stage('Docker Pipeline') {
                     stages {
                         stage('Docker › Build') {
