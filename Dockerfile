@@ -8,6 +8,10 @@ WORKDIR /app
 # Copy the fat JAR produced by maven-shade-plugin
 COPY target/GameVerseAcademy-*.jar app.jar
 
+# ServerConfig.java resolves webapp resources relative to working dir:
+# new File("src/main/webapp") → /app/src/main/webapp
+COPY src/main/webapp src/main/webapp
+
 # App listens on 6060
 EXPOSE 6060
 
