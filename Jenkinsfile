@@ -17,7 +17,10 @@ pipeline {
         EMAIL_RECIPIENT  = 'team@esi.ac.ma'
     }
 
-    triggers { pollSCM('H/5 * * * *') }
+    triggers {
+        githubPush()                   // fires instantly on GitHub push via webhook
+        pollSCM('H/5 * * * *')        // fallback poll in case webhook is missed
+    }
 
     options {
         buildDiscarder(logRotator(numToKeepStr: '10'))
