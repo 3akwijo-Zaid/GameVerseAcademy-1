@@ -9,15 +9,17 @@
 
 ## 1. Executive Summary
 
-This report documents the design, implementation, and operation of a complete CI/CD pipeline for the GameVerseAcademy web application. The pipeline automates every step from source code commit to live deployment on a Kubernetes cluster, enforcing code quality, security scanning, and artifact management at each stage.
+This report documents the design, implementation, and operation of a complete CI/CD pipeline for the GameVerseAcademy web application. The pipeline automates every step from source code commit to live deployment on a Kubernetes cluster, enforcing code quality, security scanning, artifact management, and developer notifications at each stage.
 
 The pipeline is fully operational and delivers:
-- **Automated builds** triggered by GitHub webhook (with poll fallback)
+- **Automated builds** triggered by GitHub webhook (with poll fallback every 5 min)
 - **107 unit tests** executed and reported on every build
 - **Static analysis** via SonarQube, Checkstyle, and PMD
+- **Javadoc generation** published to Jenkins on every build
 - **Artifact storage** in Sonatype Nexus (Maven + Docker registries)
 - **Container security scanning** via Trivy
 - **Zero-downtime deployment** to Kubernetes (k3s) via Helm
+- **Email notifications** sent to `amirachezaid@gmail.com` via Gmail SMTP on success, failure, and unstable builds
 
 ---
 
@@ -58,9 +60,13 @@ GitHub Repository
 │  └─────────────────┘    │
 └─────────────────────────┘
           │
-          │  http://localhost:30606/gameverseacademy/
+          │  http://localhost:30606/gameverseacademy/LoginController
           ▼
        Browser
+          
+          │  Gmail SMTP (smtp.gmail.com:587)
+          ▼
+   amirachezaid@gmail.com
 ```
 
 ---
@@ -90,6 +96,7 @@ Jenkins has `/var/run/docker.sock` mounted to enable Docker-in-Docker for image 
 | Exposed port | 30606 → 6060 |
 | Package manager | Helm 3 |
 | Image pull secret | `nexus-registry` |
+| Kubeconfig | `/var/jenkins_home/.kube/config` → `https://192.168.1.9:6443` |
 
 ### 3.3 Jenkins Plugins
 
@@ -100,10 +107,12 @@ Jenkins has `/var/run/docker.sock` mounted to enable Docker-in-Docker for image 
 | SonarQube Scanner | SonarQube analysis integration |
 | Warnings Next Generation | Checkstyle + PMD issue recording |
 | JaCoCo | Code coverage publishing |
+| Javadoc | HTML Javadoc publishing in Jenkins sidebar |
 | Docker Pipeline | Docker build and push steps |
 | Kubernetes CLI | kubectl access from pipeline |
 | Blue Ocean | Pipeline visualization |
 | Credentials Binding | Secure secret injection |
+| Mailer | Email notification via SMTP |
 | Timestamper | Build log timestamps |
 
 ---
@@ -114,7 +123,7 @@ Jenkins has `/var/run/docker.sock` mounted to enable Docker-in-Docker for image 
 
 ```groovy
 triggers {
-    githubPush()           // fires instantly on git push via GitHub webhook
+    githubPush()            // fires instantly on git push via GitHub webhook
     pollSCM('H/5 * * * *') // fallback poll every 5 minutes
 }
 ```
@@ -124,16 +133,20 @@ The dual-trigger strategy ensures builds fire immediately on push (webhook) whil
 ### 4.2 Pipeline Graph (Blue Ocean)
 
 ```
-SCM Polling → Build → Test & Coverage → Code Analysis ──────────────────────── → Quality Gate → Package & Archive → Publish & Containerise ──────────────────────── → Deploy to k3s via Helm
-                                              │                                                                              │
-                                              ├─ SonarQube                                                                  ├─ Deploy to Nexus
-                                              │    ├─ SonarQube › Analyse                                                   │    ├─ Nexus › Upload
-                                              │    └─ SonarQube › Report                                                    │    └─ Nexus › Verify
-                                              │                                                                              │
-                                              └─ Static Analysis                                                             └─ Docker Pipeline
-                                                   ├─ Static › Checkstyle                                                        ├─ Docker › Build
-                                                   ├─ Static › PMD                                                               ├─ Docker › Trivy Scan
-                                                   └─ Static › Record Issues                                                     └─ Docker › Push
+SCM Polling → Build → Test & Coverage → Code Analysis ────────────── → Quality Gate → Package & Archive → Publish & Containerise ──────────────────────────────────── → Deploy to k3s via Helm
+                                              │                                                                     │
+                                              ├─ SonarQube                                                         ├─ Deploy to Nexus
+                                              │    ├─ SonarQube › Analyse                                          │    ├─ Nexus › Upload
+                                              │    └─ SonarQube › Report                                           │    └─ Nexus › Verify
+                                              │                                                                     │
+                                              └─ Static Analysis                                                    ├─ Javadoc
+                                                   ├─ Static › Checkstyle                                          │    ├─ Javadoc › Generate
+                                                   ├─ Static › PMD                                                 │    └─ Javadoc › Publish
+                                                   └─ Static › Record Issues                                       │
+                                                                                                                    └─ Docker Pipeline
+                                                                                                                         ├─ Docker › Build
+                                                                                                                         ├─ Docker › Trivy Scan
+                                                                                                                         └─ Docker › Push
 ```
 
 ---
@@ -252,9 +265,9 @@ Configured thresholds:
 
 ---
 
-### Stage 7 — Publish & Containerise (parallel)
+### Stage 7 — Publish & Containerise (parallel — 3 branches)
 
-Two deployment branches run simultaneously after packaging:
+Three independent branches run simultaneously after packaging:
 
 #### Branch A — Deploy to Nexus (Maven)
 
@@ -268,7 +281,19 @@ Two deployment branches run simultaneously after packaging:
 **Configuration:** `distributionManagement` in `pom.xml` points to `http://nexus:8081/repository/maven-snapshots`  
 **Settings:** `/var/jenkins_home/.m2/settings.xml` provides server credentials
 
-#### Branch B — Docker Pipeline (Build → Scan → Push)
+#### Branch B — Javadoc
+
+**Purpose:** Generate and publish API documentation for every build.
+
+**Steps:**
+1. `mvn javadoc:javadoc` — generate HTML Javadoc from `src/main/java`
+2. Publish HTML to Jenkins Javadoc tab (browsable in sidebar)
+3. Archive `target/*-javadoc.jar` with fingerprint
+
+**Plugin config:** `show=private`, `doclint=none`, `failOnError=false`  
+**Output:** `target/site/apidocs/` (HTML) + `target/*-javadoc.jar` (archived)
+
+#### Branch C — Docker Pipeline (Build → Scan → Push)
 
 **Step 1 — Docker › Build**
 
@@ -312,10 +337,9 @@ aquasec/trivy image --severity HIGH,CRITICAL --exit-code 0 gameverseacademy:<bui
 **Purpose:** Deploy the new image to the Kubernetes production namespace.
 
 **Steps:**
-
-1. **Verify Environment** — confirm Helm version and active kubeconfig context
-2. **Helm Deploy** — run `helm upgrade --install`
-3. **Verify Deployment** — check release status, pod state, and service
+1. **Helm › Verify Environment** — confirm Helm version and active kubeconfig context
+2. **Helm › Deploy** — run `helm upgrade --install`
+3. **Helm › Verify Deployment** — check release status, pod state, and services
 
 **Helm command:**
 ```bash
@@ -338,11 +362,25 @@ helm upgrade --install gameverseacademy ./charts/gameverseacademy \
 | `imagePullSecrets` | nexus-registry |
 | `resources.requests` | 250m CPU, 512Mi RAM |
 | `resources.limits` | 1000m CPU, 1Gi RAM |
-| `livenessProbe` | tcpSocket:6060, delay 30s |
-| `readinessProbe` | tcpSocket:6060, delay 20s |
+| `livenessProbe` | tcpSocket:6060, initialDelay 30s |
+| `readinessProbe` | tcpSocket:6060, initialDelay 20s |
 
-**Kubeconfig:** `/var/jenkins_home/.kube/config` → `https://192.168.1.9:6443`  
 **Access URL after deployment:** `http://localhost:30606/gameverseacademy/LoginController`
+
+---
+
+### Post — Email Notifications
+
+**Purpose:** Inform the team of build outcome automatically after every run.
+
+**Provider:** Gmail SMTP (`smtp.gmail.com:587`, TLS, app password)  
+**Recipient:** `amirachezaid@gmail.com`
+
+| Outcome | Subject | Content |
+|---|---|---|
+| ✅ Success | `BUILD SUCCESSFUL — GameVerseAcademy #N` | Stage checklist, commit info, app URL, SonarQube + Nexus links, duration |
+| ❌ Failure | `BUILD FAILED — GameVerseAcademy #N` | Failed stage, commit info, direct link to console log |
+| ⚠️ Unstable | `BUILD UNSTABLE — GameVerseAcademy #N` | Warning summary, commit info, Blue Ocean link |
 
 ---
 
@@ -356,6 +394,7 @@ All secrets are stored in the Jenkins credential store — never hardcoded in th
 | `nexus-credentials` | Username/Password | Nexus Maven deploy + Docker push |
 | `sonarqube-token` | Secret Text | SonarQube analysis authentication |
 | `nexus-registry` | K8s Docker Secret | k3s image pull from Nexus |
+| `gmail-credentials` | Username/Password | Gmail SMTP authentication |
 
 ### Container Security
 - Trivy scans every built image for HIGH and CRITICAL CVEs before push
@@ -383,6 +422,13 @@ All secrets are stored in the Jenkins credential store — never hardcoded in th
 |---|---|---|
 | `localhost:8082` | `gameverseacademy` | Jenkins `BUILD_NUMBER` (immutable per build) |
 
+### Javadoc
+
+| Location | Format | Retention |
+|---|---|---|
+| Jenkins Javadoc tab | HTML (browsable) | Latest build |
+| Jenkins artifacts | `*-javadoc.jar` | Last 10 builds |
+
 Every successful build produces a uniquely tagged, immutable Docker image stored in Nexus. k3s always pulls the exact build number set by the Helm `--set image.tag` override.
 
 ---
@@ -399,10 +445,12 @@ Every successful build produces a uniquely tagged, immutable Docker image stored
 | PMD issues | 35 (pre-existing, 0 new) |
 | Checkstyle issues | reported, 0 blocking |
 | SonarQube | ANALYSIS SUCCESSFUL |
+| Javadoc | Generated and published per build |
 | Nexus Maven | Deployed to maven-snapshots |
 | Nexus Docker | Image pushed per build |
 | k3s deployment | Running in `production` namespace |
-| App URL | http://localhost:30606/gameverseacademy/ |
+| Email notifications | Active — Gmail SMTP → amirachezaid@gmail.com |
+| App URL | http://localhost:30606/gameverseacademy/LoginController |
 
 ---
 
@@ -415,13 +463,14 @@ GameVerseAcademy/
 ├── docker-compose.yml                   # CI/CD infrastructure stack
 ├── pom.xml                              # Maven build + plugin configuration
 ├── sonar-project.properties             # SonarQube project configuration
+├── CICD_REPORT.md                       # This report
 ├── charts/
 │   └── gameverseacademy/
 │       ├── Chart.yaml                   # Helm chart metadata
 │       ├── values.yaml                  # Deployment configuration
 │       └── templates/
 │           ├── deployment.yaml          # Kubernetes Deployment manifest
-│           └── service.yaml             # Kubernetes Service manifest
+│           └── service.yaml             # Kubernetes Service manifest (NodePort 30606)
 └── src/
     ├── main/
     │   ├── java/                        # Application source code
@@ -436,11 +485,12 @@ GameVerseAcademy/
 
 The GameVerseAcademy CI/CD pipeline implements a complete DevOps workflow covering the full software delivery lifecycle:
 
-1. **Source control integration** — GitHub webhook triggers instant builds on every push
-2. **Automated quality enforcement** — tests, coverage, and static analysis run on every commit
-3. **Secure artifact management** — versioned JARs and Docker images stored in Nexus
+1. **Source control integration** — GitHub webhook triggers instant builds on every push, with a poll fallback
+2. **Automated quality enforcement** — tests, coverage, static analysis, and Javadoc generation run on every commit
+3. **Secure artifact management** — versioned JARs, Javadoc JARs, and Docker images stored in Nexus
 4. **Container security** — Trivy vulnerability scanning before every push
-5. **Automated deployment** — Helm manages zero-configuration Kubernetes rollouts
-6. **Full observability** — Blue Ocean pipeline view, SonarQube dashboard, Warnings NG, JaCoCo coverage, and JUnit reports provide complete build insight
+5. **Automated deployment** — Helm manages zero-configuration Kubernetes rollouts, app accessible at NodePort 30606
+6. **Developer feedback loop** — Gmail email notifications with full build details sent on every outcome
+7. **Full observability** — Blue Ocean pipeline view, SonarQube dashboard, Warnings NG, JaCoCo coverage, JUnit reports, and Javadoc provide complete build insight
 
 The pipeline follows industry best practices: immutable artifact tagging, secret injection via credential store, parallel execution to minimize build time, and infrastructure-as-code for all configuration (Jenkinsfile, Helm chart, Docker Compose, Dockerfile — all versioned in Git).
